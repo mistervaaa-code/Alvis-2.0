@@ -1,0 +1,78 @@
+/**
+ * @fileoverview Firestore Security Rules for the application.
+ *
+ * Core Philosophy:
+ * This ruleset enforces a strict user-ownership model. Each user can only
+ * access their own profile and the conversations and messages within their
+ * own user space. This ensures that users cannot read or modify data belonging
+ * to other users.
+ *
+ * Data Structure:
+ * The Firestore data is structured hierarchically:
+ * /users/{userId} - User profile data.
+ * /users/{userId}/conversations/{conversationId} - Conversations belonging to a user.
+ * /users/{userId}/conversations/{conversationId}/messages/{messageId} - Messages within a conversation.
+ *
+ * Key Security Decisions:
+ * - User listing is explicitly denied to prevent unauthorized data access.
+ * - All write operations are protected by authorization checks to ensure only the
+ *   owner can modify data.
+ * - The rules are designed to be flexible with data shapes, focusing on authorization
+ *   rather than strict schema enforcement during this prototyping phase.
+ *
+ * Denormalization for Authorization:
+ * The rules rely on the path to enforce ownership, avoiding the need for `get()` calls
+ * or denormalized fields within the documents. The userID is embedded in the path.
+ */
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    function isOwner(userId) {
+      return request.auth != null && request.auth.uid == userId;
+    }
+
+    /**
+     * @description Allows reading and writing to a user's profile only by that user.
+     * @path /users/{userId}
+     * @allow (create) User with UID 'zp0YBIW6wyTAzDq01QDZ8b8hVRp2' can create their profile at /users/zp0YBIW6wyTAzDq01QDZ8b8hVRp2.
+     * @deny (create) User with UID 'anotherUser' cannot create a profile at /users/zp0YBIW6wyTAzDq01QDZ8b8hVRp2.
+     * @allow (get) User with UID 'zp0YBIW6wyTAzDq01QDZ8b8hVRp2' can read their profile at /users/zp0YBIW6wyTAzDq01QDZ8b8hVRp2.
+     * @deny (get) User with UID 'anotherUser' cannot read the profile at /users/zp0YBIW6wyTAzDq01QDZ8b8hVRp2.
+     * @principle Enforces document ownership for all operations on user profiles.
+     */
+    match /users/{userId} {
+      allow get: if isOwner(userId);
+      allow list: if false; // User listing is not permitted.
+      allow create: if isOwner(userId);
+      allow update: if isOwner(userId);
+      allow delete: if isOwner(userId);
+    }
+
+    /**
+     * @description Allows a user to manage their own conversations.
+     * @path /users/{userId}/conversations/{conversationId}
+     * @allow (create) User 'zp0YBIW6wyTAzDq01QDZ8b8hVRp2' can create a conversation under /users/zp0YBIW6wyTAzDq01QDZ8b8hVRp2/conversations/newConv
+     * @deny (create) User 'anotherUser' cannot create a conversation under /users/zp0YBIW6wyTAzDq01QDZ8b8hVRp2/conversations/newConv.
+     * @allow (get) User 'zp0YBIW6wyTAzDq01QDZ8b8hVRp2' can get a conversation under their user id.
+     * @deny (get) User 'anotherUser' cannot get a conversation under /users/zp0YBIW6wyTAzDq01QDZ8b8hVRp2/conversations/xyz.
+     * @principle Enforces ownership for conversations, allowing only the owner to manage them.
+     */
+    match /users/{userId}/conversations/{conversationId} {
+      allow read, write: if isOwner(userId);
+    }
+
+    /**
+     * @description Allows a user to manage messages within their own conversations.
+     * @path /users/{userId}/conversations/{conversationId}/messages/{messageId}
+     * @allow (create) User 'zp0YBIW6wyTAzDq01QDZ8b8hVRp2' can create a message within their own conversation.
+     * @deny (create) User 'anotherUser' cannot create a message within /users/zp0YBIW6wyTAzDq01QDZ8b8hVRp2/conversations/xyz/messages/abc.
+     * @allow (get) User 'zp0YBIW6wyTAzDq01QDZ8b8hVRp2' can get a message within their own conversation.
+     * @deny (get) User 'anotherUser' cannot get a message from conversation /users/zp0YBIW6wyTAzDq01QDZ8b8hVRp2/conversations/xyz/messages/abc.
+     * @principle Enforces ownership of messages, restricting access to the conversation owner.
+     */
+    match /users/{userId}/conversations/{conversationId}/messages/{messageId} {
+      allow read, write: if isOwner(userId);
+    }
+  }
+}
